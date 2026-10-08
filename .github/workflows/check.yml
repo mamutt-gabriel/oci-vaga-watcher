@@ -1,0 +1,32 @@
+name: check-oci
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+concurrency: check-oci
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Consultar capacidade
+        id: cap
+        env:
+          OCI_USER: ${{ secrets.OCI_USER }}
+          OCI_FP: ${{ secrets.OCI_FP }}
+          OCI_TENANCY: ${{ secrets.OCI_TENANCY }}
+          OCI_REGION: sa-saopaulo-1
+          OCI_KEY_PEM: ${{ secrets.OCI_KEY_PEM }}
+        run: |
+          umask 077
+          printf '%s\n' "$OCI_KEY_PEM" > "$RUNNER_TEMP/key.pem"
+          OCI_KEY="$RUNNER_TEMP/key.pem" bash check_oci.sh | grep -E '^(AD=|VAGA)'
+      - name: Avisar no celular
+        if: steps.cap.outputs.vaga == '1'
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          curl -fsS -H "Title: Oracle: vaga liberada" -H "Priority: urgent" -H "Tags: tada" \
+            -d "Apareceu capacidade ARM (A1.Flex) em Sao Paulo. Entre no console e crie a VM agora." \
+            "https://ntfy.sh/$NTFY_TOPIC"
