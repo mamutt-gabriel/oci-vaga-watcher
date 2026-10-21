@@ -1,32 +1,40 @@
 name: check-oci
 on:
   schedule:
-    - cron: '*/10 * * * *'
+    - cron: '*/30 * * * *'
   workflow_dispatch:
-concurrency: check-oci
+concurrency:
+  group: check-oci
+  cancel-in-progress: false
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 355
     steps:
       - uses: actions/checkout@v4
-      - name: Consultar capacidade
-        id: cap
+      - name: Vigiar capacidade (laço de ~5h50, 1 consulta por minuto)
         env:
           OCI_USER: ${{ secrets.OCI_USER }}
           OCI_FP: ${{ secrets.OCI_FP }}
           OCI_TENANCY: ${{ secrets.OCI_TENANCY }}
           OCI_REGION: sa-saopaulo-1
           OCI_KEY_PEM: ${{ secrets.OCI_KEY_PEM }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
         run: |
           umask 077
           printf '%s\n' "$OCI_KEY_PEM" > "$RUNNER_TEMP/key.pem"
-          OCI_KEY="$RUNNER_TEMP/key.pem" bash check_oci.sh | grep -E '^(AD=|VAGA)'
-      - name: Avisar no celular
-        if: steps.cap.outputs.vaga == '1'
-        env:
-          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
-        run: |
-          curl -fsS -H "Title: Oracle: vaga liberada" -H "Priority: urgent" -H "Tags: tada" \
-            -d "Apareceu capacidade ARM (A1.Flex) em Sao Paulo. Entre no console e crie a VM agora." \
-            "https://ntfy.sh/$NTFY_TOPIC"
+          export OCI_KEY="$RUNNER_TEMP/key.pem"
+          END=$(( $(date +%s) + 350*60 ))
+          while [ "$(date +%s)" -lt "$END" ]; do
+            OUT=$(bash check_oci.sh 2>&1 || true)
+            ST=$(printf '%s' "$OUT" | grep -oE 'status=[A-Z_?]+' | head -1 || true)
+            echo "$(date -u +%H:%M:%S) ${ST:-erro na consulta}"
+            if printf '%s' "$OUT" | grep -q '^VAGA=1'; then
+              curl -fsS -H "Title: Oracle: vaga liberada" -H "Priority: urgent" -H "Tags: tada" \
+                -d "Apareceu capacidade ARM (A1.Flex) em Sao Paulo. Entre no console e crie a VM agora." \
+                "https://ntfy.sh/$NTFY_TOPIC" || true
+              sleep 120
+            else
+              sleep 60
+            fi
+          done
